@@ -1,21 +1,100 @@
-<p>
-  <img src="assets/emsi-logo.webp" alt="EMSI — École Marocaine des Sciences de l’Ingénieur" height="58">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/quantum-africa-logo.png" alt="Quantum Africa" height="58">
-</p>
+# 🌾 Quantum Felaha — Moroccan Crop Classification Challenge
+**Qiskit Fall Fest 2026 · EMSI Casablanca · Quantum Africa**
 
-# Moroccan Crop Classification Challenge
+> **Team:** Quantum Felaha *(Les Agriculteurs Quantiques)*  
+> **Track:** Classical vs. Quantum Comparative Study & Quantum Kernel Modeling  
+> **Primary Validation Result:** **0.8707 Macro-F1** (**87.33% Accuracy**) in **< 1.0s** using a 4-Qubit Calibrated Quantum Kernel SVM — outperforming the starter QNN baseline (`0.8557`) by **+1.50 points** and cutting runtime by **~65x**.
 
-**Qiskit Fall Fest · EMSI · Quantum Africa**
+---
 
-Build a quantum or hybrid model to classify **alfalfa, maize and wheat** from satellite features. You receive **914 training, 150 validation and 221 unlabeled test fields**. Start with the [student brief (PDF)](Student_Challenge_Brief.pdf), then work through [the notebook](notebooks/Qiskit_QuantumAfrica_Crop_Challenge.ipynb).
+## 📌 1. Project Overview & Motivation
 
-The simple starter QNN performs worse than the classical baseline. Your task is to improve the approach **or replace it with another quantum or hybrid model**. You do not have to extend this QNN. A well-supported comparison can earn full analysis credit even if it does not beat the baseline.
+Precision agriculture in Morocco relies heavily on accurate crop mapping to optimize irrigation and resource allocation. In this challenge, we classify **1,285 satellite-observed agricultural parcels** in the **Doukkala** region into three strategic crops:
+* **Alfalfa** (*Luzerne*)
+* **Maize** (*Maïs*)
+* **Wheat** (*Blé*)
 
-## Install and run
+Rather than treating quantum machine learning as a black box, our team conducted a **controlled, hypothesis-driven comparative study** (*Comparaison Classique vs. Quantique*) to answer a core research question:
 
-Clone the repository, then create a Python 3.12 environment:
+> *"Under strict qubit ($\le 8$) and training-budget constraints, why do variational QNNs stall under gradient-free optimization (COBYLA), and can a calibrated, low-depth Quantum Kernel SVM overcome convergence bottlenecks to outperform the quantum baseline?"*
 
+---
+
+## 🔬 2. Experimental Journey & Key Findings
+
+We systematically evaluated **6 classical and quantum configurations** on the exact same leakage-free 4-component PCA view (fitted strictly on the 914 training parcels and evaluated on the balanced 150-parcel validation set):
+
+| Model | Paradigm | Quantum / Model Resources | Validation Macro-F1 | Validation Accuracy | Mean Runtime |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **Classical RBF SVM** *(Reference)* | Classical | 4 PCA features | **0.8797** | **88.00%** | `< 0.01 s` |
+| **🏆 Calibrated Quantum Kernel SVM** *(Ours)* | **Quantum-Classical** | **4 qubits · Depth 3 · 4 `CZ` gates** | **0.8707** | **87.33%** | **`0.85 s`** |
+| **Starter QNN** (`ry` encoding) | Variational QNN | 4 qubits · 8 trainable params · 3 `CX` | 0.8557 | 85.56% | `~55.0 s / seed` |
+| **Quantum Kernel SVM** (`zz_feature_map`) | Quantum-Classical | 4 qubits · `reps=1` · 3 `CX` | 0.8065 | 80.67% | `0.85 s` |
+| **Quantum Kernel SVM** (`zz_feature_map`) | Quantum-Classical | 6 qubits · `reps=1` · 5 `CX` | 0.7419 | 74.00% | `1.17 s` |
+| **Data Re-uploading QNN** (`reupload`) | Variational QNN | 4 qubits · 12 trainable params · 3 `CX` | 0.7081 ± 0.0411 | 71.11% | `166.0 s / seed` |
+| **Matched Classical Control** (`MatchedHead`) | Classical Neural | 11 trainable params (1 hidden unit) | 0.5814 | 65.11% | `0.05 s / seed` |
+
+### 💡 Three Scientific Takeaways
+1. **Why Variational QNNs Stalled (`0.8557` $\rightarrow$ `0.7081`):**  
+   To satisfy the $\pm 20\%$ parameter-matching rule against the 11-parameter classical control (`MatchedHead`), we built a 12-parameter 2-layer Data Re-uploading QNN (`reupload`, `8.3%` parameter gap). While it beat the matched classical neural network (`0.7081` vs. `0.5814`), expanding the parameter space under a fixed **100-evaluation COBYLA budget** prevented convergence and increased seed variance ($\pm 0.0411$).
+2. **Mitigating Hilbert-Space Kernel Concentration (`4 qubits` vs. `6 qubits`):**  
+   Testing `zz_feature_map` across dimensions showed a sharp drop from 4 qubits (`0.8065`) to 6 qubits (`0.7419`), confirming that expanding to a $2^6 = 64$-dimensional Hilbert space dilutes inner-product similarities on 914 samples.
+3. **Breakthrough via Smooth Bi-Axial Encoding & Angle Scaling (`scale = 0.35`):**  
+   Replacing COBYLA with exact statevector fidelity $K(x, y) = |\langle \psi(x) \mid \psi(y) \rangle|^2$ and designing a smooth **4-qubit circuit (`RY` + `RZ` + circular `CZ`)** with calibrated angle scaling ($\theta_i = 0.35\pi \tanh(x_i)$) prevented periodic phase wrap-around and lifted quantum performance to **0.8707 Macro-F1**.
+
+---
+
+## ⚛️ 3. Winning Architecture (`QuantumKernelSVM`)
+
+```text
+4 PCA Features ──► Angle Calibration: θᵢ = 0.35 · π · tanh(xᵢ)
+                        │
+                        ▼
+        ┌───────────────────────────────┐
+        │   4-Qubit Feature Map (d = 3) │
+        │  • RY(θᵢ) & RZ(0.5·θᵢ)        │
+        │  • Circular CZ: (0-1-2-3-0)   │
+        └───────────────┬───────────────┘
+                        │  Exact Statevector Fidelity
+                        ▼
+        Kernel Matrix: K(x, y) = |⟨ψ(x)|ψ(y)⟩|²
+                        │
+                        ▼
+        Balanced SVC (C = 3.0, class_weight='balanced')
+                        │
+                        ▼
+        Crop Prediction: {alfalfa, maize, wheat}
+```
+
+### Circuit Resource Summary (Exact Local Simulation)
+* **Qubits:** `4` (strictly within the $\le 8$ qubit limit)
+* **Circuit Depth:** `3`
+* **Entangling Gates:** `4` two-qubit `CZ` gates (circular topology)
+* **Trainable Quantum Parameters:** `0` (convex dual optimization via `SVC`)
+* **Determinism:** Exact `Statevector` evaluation with `random_state=0` yields **zero seed variance** across seeds `0, 1, 2`.
+
+---
+
+## 📂 4. Repository Structure
+
+```text
+├── challenge/
+│   ├── models.py          # Implements QuantumKernelSVM, QuantumClassifier ('ry', 'zz', 'reupload'), & MatchedHead
+│   ├── submission.py      # Official judging interface wired to QuantumKernelSVM (scale=0.35, C=3.0)
+│   └── ...                # Data loaders, leakage-free PCA transforms, and evaluation metrics
+├── notebooks/
+│   └── Qiskit_QuantumAfrica_Crop_Challenge.ipynb  # Full walkthrough, ablation studies, and validation plots
+├── configs/               # Baseline and experiment configuration files
+├── data/                  # Prepared Doukkala crop dataset (914 train / 150 val / 221 unlabeled test)
+├── results/               # Reference starter outputs
+└── requirements.txt       # Pinned Python 3.12 + Qiskit 2.4.2 environment
+```
+
+---
+
+## 🚀 5. Installation & Reproduction
+
+### 1. Environment Setup (Python 3.12)
 ```bash
 git clone https://github.com/walid-mk/QiskitFallFest_EMSI_QuantumAfrica.git
 cd QiskitFallFest_EMSI_QuantumAfrica
@@ -23,89 +102,22 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m ipykernel install --user --name crop-challenge --display-name "Crop challenge"
 ```
+*(On Windows PowerShell, use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.)*
 
-The notebook includes saved outputs for viewing directly on GitHub. To reproduce them, open `notebooks/Qiskit_QuantumAfrica_Crop_Challenge.ipynb` in a notebook editor, select **Crop challenge**, and run all cells. The pinned environment uses Qiskit 2.4.2 and Qiskit Machine Learning 0.9.1. All data is included; local simulation needs no IBM token. To execute and export without an editor:
+### 2. Verify the Submission Pipeline
+You can verify our final submission model (`challenge/submission.py`) directly from Python in **< 1 second**:
+```python
+from challenge import submission
 
-```bash
-.venv/bin/python -m jupyter nbconvert --to html --execute notebooks/Qiskit_QuantumAfrica_Crop_Challenge.ipynb --output-dir outputs
+sub = submission.Submission()
+# Fits on the 914 training fields and predicts on validation/test views
 ```
+Or open `notebooks/Qiskit_QuantumAfrica_Crop_Challenge.ipynb`, select the **Crop challenge** kernel, ensure `USE_FULL_TRAINING = True`, and run all cells to reproduce every metric, confusion matrix, and ablation table.
 
-The default fit uses 100 fixed training fields. Set `USE_FULL_TRAINING = True` for the main 914-field comparison. Later plots read saved full-training results, so changing the quick fit does not replace those plots. Your generated files go in `outputs/`.
+---
 
-## Dataset in context
+## 📜 6. Data Rules & Acknowledgments
 
-Ouassanouan et al. (2026) describe around **10,000 surveyed agricultural parcels** across Morocco, with crop and irrigation labels and associated satellite observations. This challenge uses a prepared **three-crop cohort from Doukkala**, with fixed training, validation and test splits. Read the [dataset paper](https://www.nature.com/articles/s41597-026-06993-y) for the wider collection methodology.
-
-<p align="center">
-  <a href="https://www.nature.com/articles/s41597-026-06993-y/figures/1">
-    <img src="assets/morocco-study-regions.webp" alt="Figure 1: Moroccan study regions, surveyed agricultural parcels and mean annual NDVI for 2024" width="430">
-  </a>
-</p>
-
-**Image source:** Figure 1 in Ouassanouan, Y., Elfarkh, J., Grich, S., Liblab, A. & Chehbouni, A., *Crop and irrigation types ground-truth dataset for Moroccan agricultural regions*, **Scientific Data 13, 746 (2026)**. [Original figure](https://www.nature.com/articles/s41597-026-06993-y/figures/1) · [DOI](https://doi.org/10.1038/s41597-026-06993-y). © The Author(s) 2026, reproduced unchanged under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/). The map describes the source dataset's coverage, not the challenge splits.
-
-## Inside the starter
-
-<p align="center">
-  <img src="assets/data-overview.png" alt="Training and validation class counts, alongside the first two training-fitted PCA components" width="820">
-</p>
-
-**Explore the data:** training classes are imbalanced; validation contains 50 fields per crop. PCA provides a compact feature view, fitted only on training data.
-
-<p align="center">
-  <img src="assets/starter-circuit.png" alt="Starter four-qubit circuit with RY input encoding, eight trainable angles and three CX gates" width="510">
-</p>
-
-**Understand the model:** four prepared features enter through RY gates, followed by eight trainable angles and three CX gates. The notebook explains the three-class readout and where you can change or replace this model.
-
-## Starting results
-
-Validation results using all 914 training fields and seeds 0, 1 and 2:
-
-| Model | Mean macro-F1 | Mean accuracy |
-| --- | ---: | ---: |
-| Classical baseline: RBF SVM | 0.8797 | 88.00% |
-| Simple four-qubit QNN | 0.8557 | 85.56% |
-| Small classical replacement control | 0.5814 | 65.11% |
-
-<p align="center">
-  <img src="assets/validation-performance.png" alt="Validation macro-F1 across three seeds and runtime comparison for the SVM, classical control and QNN" width="820">
-</p>
-
-**Read the comparison:** dots show seeds 0/1/2, error bars show seed standard deviation, and runtime uses a logarithmic scale. Timings depend on the machine. All three starter figures above are generated by the notebook from the supplied data and saved validation runs.
-
-The SVM is deterministic. The QNN has eight trainable angles; the control has eleven parameters, a disclosed 37.5% mismatch. Saved predictions, histories and scores are in `results/`. Keep them as reference results and save your own runs separately. These results do not demonstrate a quantum advantage.
-
-## Where to work
-
-- **Notebook:** explains each step and output, with a table mapping every Python file to the changes you can make.
-- **`challenge/models.py`:** encoding, QNN and classical control; **`challenge/submission.py`:** your final model's `fit`/`predict` interface.
-- **`challenge/coverage.py`:** reproducible training-size comparisons; see [coverage commands](docs/COVERAGE.md).
-- **`data/`:** supplied tables and PCA views; read [feature definitions and limitations](data/README.md). Keep these files unchanged.
-- **`configs/`:** baseline configuration and recorded starter settings. `reference.json` is loaded by the baseline; `pilot.json` records settings and is not an automatic configuration loader.
-
-Fit transformations on training data only. Use validation data for model selection and test data only for final predictions. “Development data” in the original brief means validation data. Keep all three classes and the supplied spatial splits; IDs are never model inputs. Larger datasets require a supplied, checked extension: adding rows alone cannot guarantee better accuracy.
-
-## Submit
-
-Submit one runnable notebook or code package with configurations and results, plus **three to five slides**. Run selected stochastic models and controls with seeds **0, 1 and 2**. Report macro-F1, accuracy, each class's precision/recall, confusion matrices, runtime and model resources.
-
-Judging: predictive performance **30**, experimental quality and analysis **40**, model design and reproducibility **30**. Optional verified IBM inference may earn **+5**. See the [evaluation guide](docs/EVALUATION.md) and [method ideas](docs/HINTS.md).
-
-Use exact local simulation with at most **eight qubits**. Plan for up to **15 minutes per starter seed** and **35 minutes per final seed**, including preprocessing and prediction; final judging-machine details will be announced. **Submission deadline, timezone and route: to be announced.**
-
-Hardware inference is optional and disabled by default. Only that section needs `requirements-hardware.txt`, credentials in your environment and permission to use the chosen account/backend. Train locally first.
-
-## Data source
-
-Adapted from Ouassanouan et al., [Moroccan Crop and Irrigation Dataset v2](https://doi.org/10.6084/m9.figshare.28486022.v2), under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Filtering, daily medians, spatial splitting and training-only PCA were applied. Labels surveyed on 23–27 April are **assumed** to apply to imagery from 25 April 2024; crop persistence is not independently verified. Cloud handling and band calibration are undocumented. Results describe this local Doukkala cohort.
-
-## License
-
-The code and original challenge documentation are available under the [MIT License](LICENSE). Third-party materials retain their own terms:
-
-- **Dataset and derived data:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); see [data attribution](data/README.md).
-- **Paper figure**, including its reproduction in the brief: [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/), credited above.
-- **EMSI and Quantum Africa logos:** belong to their respective owners and are excluded from the MIT license.
-
-Dependencies retain their respective licenses.
+* **Strict Leakage Prevention:** All PCA projections and feature scalers are fitted exclusively on the `914` training fields. Validation (`150` fields) was used strictly for model selection, and test (`221` fields) remains completely untouched for organizer evaluation.
+* **Dataset Attribution:** Derived from the Moroccan agricultural parcel dataset by *Ouassanouan et al. (2026)* ([Nature Scientific Data](https://www.nature.com/articles/s41597-026-06993-y)), licensed under **CC BY 4.0**.
+* **Challenge Framework:** Built upon the official Qiskit Fall Fest · EMSI Casablanca · Quantum Africa starter repository (MIT License).
